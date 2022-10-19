@@ -13,6 +13,11 @@ interface ILockAura {
 
     function lock(address _account, uint256 _amount) external;
 
+    function userData(address _account, address _rewardToken)
+        external
+        view
+        returns (uint128 rewardPerTokenPaid, uint128 rewards);
+
     function lockedBalances(address _user)
         external
         view

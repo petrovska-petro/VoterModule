@@ -27,7 +27,7 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
         IERC20(0x616e8BfA43F920657B3497DBf40D6b1A02D4608d);
     ILockAura public constant LOCKER =
         ILockAura(0x3Fa73f1E5d8A792C80F426fc8F84FBF7Ce9bBCAC);
-    address constant GRAVI = 0xBA485b556399123261a5F9c95d413B4f93107407;
+    IGravi constant GRAVI = IGravi(0xBA485b556399123261a5F9c95d413B4f93107407);
     address constant TROPS = 0x042B32Ac6b453485e357938bdC38e0340d4b9276;
 
     /* ========== STATE VARIABLES ========== */
@@ -156,47 +156,55 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
 
     /// @dev method will claim auraBAL & transfer balance to trops
     function _claimRewardsAndSweep() internal {
-        _checkTransactionAndExecute(
-            address(LOCKER),
-            abi.encodeWithSelector(ILockAura.getReward.selector, address(SAFE))
-        );
-        _checkTransactionAndExecute(
-            address(AURABAL),
-            abi.encodeWithSelector(
-                IERC20.transfer.selector,
-                TROPS,
-                AURABAL.balanceOf(address(SAFE))
-            )
-        );
+        (, uint256 rewards) = LOCKER.userData(address(SAFE), address(AURABAL));
+        if (rewards > 0) {
+            _checkTransactionAndExecute(
+                address(LOCKER),
+                abi.encodeWithSelector(
+                    ILockAura.getReward.selector,
+                    address(SAFE)
+                )
+            );
+            _checkTransactionAndExecute(
+                address(AURABAL),
+                abi.encodeWithSelector(
+                    IERC20.transfer.selector,
+                    TROPS,
+                    AURABAL.balanceOf(address(SAFE))
+                )
+            );
+        }
     }
 
     /// @dev method will wd from graviaura and lock aura in voter msig
     function _withdrawGraviAndLockAura() internal {
-        _checkTransactionAndExecute(
-            GRAVI,
-            abi.encodeWithSelector(IGravi.withdrawAll.selector)
-        );
+        if (GRAVI.balanceOf(address(SAFE)) > 0) {
+            _checkTransactionAndExecute(
+                address(GRAVI),
+                abi.encodeWithSelector(IGravi.withdrawAll.selector)
+            );
 
-        uint256 auraSafeBal = AURA.balanceOf(address(SAFE));
-        if (auraSafeBal > 0) {
-            /// @dev approves aura to process in locker
-            _checkTransactionAndExecute(
-                address(AURA),
-                abi.encodeWithSelector(
-                    IERC20.approve.selector,
+            uint256 auraSafeBal = AURA.balanceOf(address(SAFE));
+            if (auraSafeBal > 0) {
+                /// @dev approves aura to process in locker
+                _checkTransactionAndExecute(
+                    address(AURA),
+                    abi.encodeWithSelector(
+                        IERC20.approve.selector,
+                        address(LOCKER),
+                        auraSafeBal
+                    )
+                );
+                /// @dev lock aura in locker
+                _checkTransactionAndExecute(
                     address(LOCKER),
-                    auraSafeBal
-                )
-            );
-            /// @dev lock aura in locker
-            _checkTransactionAndExecute(
-                address(LOCKER),
-                abi.encodeWithSelector(
-                    ILockAura.lock.selector,
-                    address(SAFE),
-                    auraSafeBal
-                )
-            );
+                    abi.encodeWithSelector(
+                        ILockAura.lock.selector,
+                        address(SAFE),
+                        auraSafeBal
+                    )
+                );
+            }
         }
     }
 
