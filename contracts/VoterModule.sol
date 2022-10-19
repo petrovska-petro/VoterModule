@@ -116,9 +116,7 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
         whenNotPaused
         returns (bool upkeepNeeded, bytes memory checkData)
     {
-        if ((block.timestamp - lastTimestamp) > interval) {
-            upkeepNeeded = true;
-        }
+        upkeepNeeded = (block.timestamp - lastTimestamp) > interval;
     }
 
     /// @dev Contains the logic that should be executed on-chain when
@@ -137,6 +135,8 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
             _claimRewardsAndSweep();
             // 3. wd gravi and lock aura in voter
             _withdrawGraviAndLockAura();
+            // 4. update last ts
+            lastTimestamp = block.timestamp;
         }
     }
 
