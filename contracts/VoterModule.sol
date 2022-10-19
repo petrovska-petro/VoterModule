@@ -32,7 +32,7 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
 
     /* ========== STATE VARIABLES ========== */
     address public governance;
-    uint256 public lastTimestamp;
+    uint256 public lastRewardClaimTimestamp;
     uint256 public interval;
 
     EnumerableSet.AddressSet internal _executors;
@@ -49,7 +49,7 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
         uint256 _intervalSeconds
     ) {
         governance = _governance;
-        lastTimestamp = _startTimestamp;
+        lastRewardClaimTimestamp = _startTimestamp;
         interval = _intervalSeconds;
     }
 
@@ -116,7 +116,22 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
         whenNotPaused
         returns (bool upkeepNeeded, bytes memory checkData)
     {
-        upkeepNeeded = (block.timestamp - lastTimestamp) > interval;
+        /// @dev multi-conditional upkeep checks
+        (, uint256 unlockable, , ) = LOCKER.lockedBalances(address(SAFE));
+        (, uint256 rewards) = LOCKER.userData(address(SAFE), address(AURABAL));
+        uint256 graviBal = GRAVI.balanceOf(address(SAFE));
+
+        if (unlockable > 0) {
+            // prio expired locks
+            upkeepNeeded = true;
+        } else if (
+            rewards > 0 &&
+            (block.timestamp - lastRewardClaimTimestamp) > interval
+        ) {
+            upkeepNeeded = true;
+        } else if (graviBal > 0) {
+            upkeepNeeded = true;
+        }
     }
 
     /// @dev Contains the logic that should be executed on-chain when
@@ -127,17 +142,12 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
         onlyExecutors
         whenNotPaused
     {
-        /// @dev double check the time interval in the perform block
-        if ((block.timestamp - lastTimestamp) > interval) {
-            // 1. process unlocks
-            _processExpiredLocks();
-            // 2. claim vlaura rewards and transfer aurabal to trops
-            _claimRewardsAndSweep();
-            // 3. wd gravi and lock aura in voter
-            _withdrawGraviAndLockAura();
-            // 4. update last ts
-            lastTimestamp = block.timestamp;
-        }
+        // 1. process unlocks
+        _processExpiredLocks();
+        // 2. claim vlaura rewards and transfer aurabal to trops
+        _claimRewardsAndSweep();
+        // 3. wd gravi and lock aura in voter
+        _withdrawGraviAndLockAura();
     }
 
     /// @dev method will process expired locks if available
@@ -157,7 +167,10 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
     /// @dev method will claim auraBAL & transfer balance to trops
     function _claimRewardsAndSweep() internal {
         (, uint256 rewards) = LOCKER.userData(address(SAFE), address(AURABAL));
-        if (rewards > 0) {
+        if (
+            rewards > 0 &&
+            (block.timestamp - lastRewardClaimTimestamp) > interval
+        ) {
             _checkTransactionAndExecute(
                 address(LOCKER),
                 abi.encodeWithSelector(
@@ -173,6 +186,8 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
                     AURABAL.balanceOf(address(SAFE))
                 )
             );
+            /// @dev will be used as condition, so rewards are not claim that often, leave time for accum
+            lastRewardClaimTimestamp = block.timestamp;
         }
     }
 
