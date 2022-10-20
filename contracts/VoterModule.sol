@@ -29,6 +29,8 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
         ILockAura(0x3Fa73f1E5d8A792C80F426fc8F84FBF7Ce9bBCAC);
     IGravi constant GRAVI = IGravi(0xBA485b556399123261a5F9c95d413B4f93107407);
     address constant TROPS = 0x042B32Ac6b453485e357938bdC38e0340d4b9276;
+    address constant GRAVI_STRAT = 0x3c0989eF27e3e3fAb87a2d7C38B35880C90E63b5;
+    uint256 constant ONE_ETH = 1 ether;
 
     /* ========== STATE VARIABLES ========== */
     address public governance;
@@ -193,11 +195,31 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
 
     /// @dev method will wd from graviaura and lock aura in voter msig
     function _withdrawGraviAndLockAura() internal {
-        if (GRAVI.balanceOf(address(SAFE)) > 0) {
-            _checkTransactionAndExecute(
-                address(GRAVI),
-                abi.encodeWithSelector(IGravi.withdrawAll.selector)
+        uint256 graviSafeBal = GRAVI.balanceOf(address(SAFE));
+        if (graviSafeBal > 0) {
+            /// @dev check avail aura to avoid wd reverts
+            uint256 graviPpfs = GRAVI.getPricePerFullShare() / ONE_ETH;
+            uint256 auraInVault = AURA.balanceOf(address(GRAVI));
+            (, uint256 unlockableStrat, , ) = LOCKER.lockedBalances(
+                GRAVI_STRAT
             );
+            uint256 totalWdAura = auraInVault + unlockableStrat;
+
+            /// @dev depends on condition we will do a full wd or partial
+            if (totalWdAura < graviSafeBal * graviPpfs) {
+                _checkTransactionAndExecute(
+                    address(GRAVI),
+                    abi.encodeWithSelector(
+                        IGravi.withdraw.selector,
+                        totalWdAura / graviPpfs
+                    )
+                );
+            } else {
+                _checkTransactionAndExecute(
+                    address(GRAVI),
+                    abi.encodeWithSelector(IGravi.withdrawAll.selector)
+                );
+            }
 
             uint256 auraSafeBal = AURA.balanceOf(address(SAFE));
             if (auraSafeBal > 0) {
