@@ -39,12 +39,6 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
 
     EnumerableSet.AddressSet internal _executors;
 
-    /// @dev address target allowed to trigger
-    mapping(address => bool) public allowedTargets;
-
-    /* ========== EVENT ========== */
-    event SetTargetAllowed(address target, bool allowed);
-
     constructor(
         address _governance,
         uint64 _startTimestamp,
@@ -71,18 +65,6 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
     /***************************************
                ADMIN - GOVERNANCE
     ****************************************/
-    /// @dev Set whether or not calls can be made to an address.
-    /// @notice Only callable by governance.
-    /// @param target Address to be allowed/disallowed.
-    /// @param allow Bool to allow (true) or disallow (false) calls to target.
-    function setTargetAllowed(address target, bool allow)
-        external
-        onlyGovernance
-    {
-        allowedTargets[target] = allow;
-        emit SetTargetAllowed(target, allowedTargets[target]);
-    }
-
     /// @dev Adds an executor to the Set of allowed addresses.
     /// @notice Only callable by governance.
     /// @param _executor Address which will have rights to call `checkTransactionAndExecute`.
@@ -198,7 +180,7 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
         uint256 graviSafeBal = GRAVI.balanceOf(address(SAFE));
         if (graviSafeBal > 0) {
             /// @dev check avail aura to avoid wd reverts
-            uint256 graviPpfs = GRAVI.getPricePerFullShare() / ONE_ETH;
+            uint256 graviPpfs = GRAVI.getPricePerFullShare();
             uint256 auraInVault = AURA.balanceOf(address(GRAVI));
             (, uint256 unlockableStrat, , ) = LOCKER.lockedBalances(
                 GRAVI_STRAT
@@ -206,14 +188,17 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
             uint256 totalWdAura = auraInVault + unlockableStrat;
 
             /// @dev depends on condition we will do a full wd or partial
-            if (totalWdAura < graviSafeBal * graviPpfs) {
-                _checkTransactionAndExecute(
-                    address(GRAVI),
-                    abi.encodeWithSelector(
-                        IGravi.withdraw.selector,
-                        totalWdAura / graviPpfs
-                    )
-                );
+            if (totalWdAura < (graviSafeBal / ONE_ETH) * graviPpfs) {
+                /// @dev covers corner case when nothing might be withdrawable
+                if (totalWdAura > 0) {
+                    _checkTransactionAndExecute(
+                        address(GRAVI),
+                        abi.encodeWithSelector(
+                            IGravi.withdraw.selector,
+                            (totalWdAura / graviPpfs) * ONE_ETH
+                        )
+                    );
+                }
             } else {
                 _checkTransactionAndExecute(
                     address(GRAVI),
@@ -252,8 +237,6 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
     function _checkTransactionAndExecute(address to, bytes memory data)
         internal
     {
-        require(allowedTargets[to], "address-not-allowed!");
-
         if (data.length >= 4) {
             require(
                 SAFE.execTransactionFromModule(
