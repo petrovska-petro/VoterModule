@@ -15,23 +15,26 @@ def governance(accounts):
 
 
 @pytest.fixture
-def executor(accounts):
-    return accounts[2]
+def techops(accounts):
+    # # https://github.com/Badger-Finance/badger-multisig/blob/main/helpers/addresses.py#L50
+    return accounts.at("0x86cbD0ce0c087b482782c181dA8d191De18C8275", force=True)
 
 
 @pytest.fixture
 def trops(accounts):
+    # https://github.com/Badger-Finance/badger-multisig/blob/main/helpers/addresses.py#L55
     return accounts.at("0x042B32Ac6b453485e357938bdC38e0340d4b9276", force=True)
 
 
 @pytest.fixture
 def keeper():
+    # https://docs.chain.link/docs/chainlink-automation/supported-networks/#registry-and-registrar-addresses
     return accounts.at("0x02777053d6764996e594c3E88AF1D58D5363a2e6", force=True)
 
 
 @pytest.fixture
 def safe():
-    # voter_msig
+    # https://github.com/Badger-Finance/badger-multisig/blob/main/helpers/addresses.py#L58
     return interface.IGnosisSafe("0xA9ed98B5Fb8428d68664f3C5027c62A10d45826b")
 
 
@@ -40,14 +43,15 @@ def voter_module(deployer, governance):
     return VoterModule.deploy(governance, chain.time(), HOUR_SECS, {"from": deployer})
 
 
+# https://docs.pytest.org/en/6.2.x/fixture.html#autouse-fixtures-fixtures-you-don-t-have-to-request
 @pytest.fixture(autouse=True)
-def config_module(safe, voter_module, governance, executor, keeper):
+def config_module(safe, voter_module, governance, techops, keeper):
     # enable module
     safe.enableModule(voter_module.address, {"from": safe})
     assert voter_module.address in safe.getModules()
 
-    # add executor
-    voter_module.addExecutor(executor, {"from": governance})
+    # add executors. roles i expect: techops & CL keepers
+    voter_module.addExecutor(techops, {"from": governance})
     voter_module.addExecutor(keeper, {"from": governance})
 
 

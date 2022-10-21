@@ -39,6 +39,9 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
 
     EnumerableSet.AddressSet internal _executors;
 
+    /* ========== EVENT ========== */
+    event RewardPaidModule(address indexed _user, address indexed _rewardToken, uint256 _reward, uint256 _timestamp);
+
     constructor(
         address _governance,
         uint64 _startTimestamp,
@@ -88,6 +91,16 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
         governance = _governance;
     }
 
+    /// @dev Pauses the contract, which prevents executing performUpkeep.
+    function pause() external onlyGovernance {
+        _pause();
+    }
+    
+    /// @dev Unpauses the contract.
+    function unpause() external onlyGovernance {
+        _unpause();
+    }
+
     /***************************************
                 KEEPERS - EXECUTORS
     ****************************************/
@@ -126,6 +139,8 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
         onlyExecutors
         whenNotPaused
     {
+        /// @dev safety check, ensuring onchain module is config
+        require(SAFE.isModuleEnabled(address(this)), "no-module-enabled!");
         // 1. process unlocks
         _processExpiredLocks();
         // 2. claim vlaura rewards and transfer aurabal to trops
@@ -162,16 +177,18 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
                     address(SAFE)
                 )
             );
+            uint256 aurabalSafeBal = AURABAL.balanceOf(address(SAFE));
             _checkTransactionAndExecute(
                 address(AURABAL),
                 abi.encodeWithSelector(
                     IERC20.transfer.selector,
                     TROPS,
-                    AURABAL.balanceOf(address(SAFE))
+                    aurabalSafeBal
                 )
             );
             /// @dev will be used as condition, so rewards are not claim that often, leave time for accum
             lastRewardClaimTimestamp = block.timestamp;
+            emit RewardPaidModule(address(SAFE), address(AURABAL), aurabalSafeBal, lastRewardClaimTimestamp);
         }
     }
 
@@ -187,23 +204,24 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
             );
             uint256 totalWdAura = auraInVault + unlockableStrat;
 
-            /// @dev depends on condition we will do a full wd or partial
-            if (totalWdAura < (graviSafeBal / ONE_ETH) * graviPpfs) {
-                /// @dev covers corner case when nothing might be withdrawable
-                if (totalWdAura > 0) {
+            /// @dev covers corner case when nothing might be withdrawable
+            if (totalWdAura > 0) {
+                /// @dev depends on condition we will do a full wd or partial
+                if (totalWdAura < (graviSafeBal / ONE_ETH) * graviPpfs) {
+                        _checkTransactionAndExecute(
+                            address(GRAVI),
+                            abi.encodeWithSelector(
+                                IGravi.withdraw.selector,
+                                (totalWdAura * ONE_ETH )/ graviPpfs
+                            )
+                        );
+                    
+                } else {
                     _checkTransactionAndExecute(
                         address(GRAVI),
-                        abi.encodeWithSelector(
-                            IGravi.withdraw.selector,
-                            (totalWdAura / graviPpfs) * ONE_ETH
-                        )
+                        abi.encodeWithSelector(IGravi.withdrawAll.selector)
                     );
                 }
-            } else {
-                _checkTransactionAndExecute(
-                    address(GRAVI),
-                    abi.encodeWithSelector(IGravi.withdrawAll.selector)
-                );
             }
 
             uint256 auraSafeBal = AURA.balanceOf(address(SAFE));
@@ -248,5 +266,14 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
                 "exec-error!"
             );
         }
+    }
+
+    /***************************************
+               PUBLIC FUNCTION
+    ****************************************/
+
+    /// @dev Returns all addresses which have executor role
+    function getExecutors() public view returns (address[] memory) {
+        return _executors.values();
     }
 }

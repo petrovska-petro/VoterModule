@@ -1,4 +1,4 @@
-from brownie import chain
+from brownie import chain, reverts
 
 
 def test_upkeep_needed(voter_module, keeper):
@@ -7,20 +7,25 @@ def test_upkeep_needed(voter_module, keeper):
     return upkeep_needed
 
 
-def test_perform_upkeep(
+def test_perform_upkeep_cl_keeper(
     voter_module, keeper, safe, gravi, aura, aurabal, trops, aura_locker
 ):
+    # push time for trigger `True` in upkeep
+    target_ts = voter_module.lastRewardClaimTimestamp() + voter_module.interval() * 2
+    chain.mine(timestamp=target_ts)
     upkeep_needed = test_upkeep_needed(voter_module, keeper)
     assert upkeep_needed
-    
+
     # check vals before
     aurabal_bal_before = aurabal.balanceOf(trops)
     gravi_bal_before = gravi.balanceOf(safe)
 
-    # exec voter chore + summing interval for aurabal processing
-    chain.sleep(voter_module.interval())
-    chain.mine()
-    voter_module.performUpkeep(b"", {"from": keeper})
+    # exec voter chore
+    tx = voter_module.performUpkeep(b"", {"from": keeper})
+
+    # check new custom event to including timestamp
+    assert len(tx.events["RewardPaidModule"]) > 0
+    print(tx.events["RewardPaidModule"])
 
     # check that unlocks all were processed
     _, unlockable, _, _ = aura_locker.lockedBalances(safe)
@@ -33,3 +38,54 @@ def test_perform_upkeep(
     assert gravi_bal_after <= gravi_bal_before
     # check that naked aura is zero
     assert aura.balanceOf(safe) == 0
+
+
+def test_perform_upkeep_techops(
+    voter_module, techops, safe, gravi, aura, aurabal, trops, aura_locker
+):
+    # push time for trigger `True` in upkeep
+    target_ts = voter_module.lastRewardClaimTimestamp() + voter_module.interval() * 2
+    chain.mine(timestamp=target_ts)
+    upkeep_needed = test_upkeep_needed(voter_module, techops)
+    assert upkeep_needed
+
+    # check vals before
+    aurabal_bal_before = aurabal.balanceOf(trops)
+    gravi_bal_before = gravi.balanceOf(safe)
+
+    # exec voter chore
+    voter_module.performUpkeep(b"", {"from": techops})
+
+    # check that unlocks all were processed
+    _, unlockable, _, _ = aura_locker.lockedBalances(safe)
+    assert unlockable == 0
+    # check that aurabal in trops increased, here may be equal since already was claim once
+    aurabal_bal_after = aurabal.balanceOf(trops)
+    assert aurabal_bal_after >= aurabal_bal_before
+    # check that gravi is same value or less. Same if nothing could be wd
+    gravi_bal_after = gravi.balanceOf(safe)
+    assert gravi_bal_after <= gravi_bal_before
+    # check that naked aura is zero
+    assert aura.balanceOf(safe) == 0
+
+
+def test_perform_upkeep_paused_state(voter_module, keeper, governance):
+    # push time for trigger `true` in upkeep
+    target_ts = voter_module.lastRewardClaimTimestamp() + voter_module.interval() * 2
+    chain.mine(timestamp=target_ts)
+    upkeep_needed = test_upkeep_needed(voter_module, keeper)
+    assert upkeep_needed
+    voter_module.pause({"from": governance})
+    with reverts("Pausable: paused"):
+        voter_module.performUpkeep(b"", {"from": keeper})
+    voter_module.unpause({"from": governance})
+
+
+def test_perform_upkeep_from_random_account(voter_module, keeper, accounts):
+    # push time for trigger `true` in upkeep
+    target_ts = voter_module.lastRewardClaimTimestamp() + voter_module.interval() * 2
+    chain.mine(timestamp=target_ts)
+    upkeep_needed = test_upkeep_needed(voter_module, keeper)
+    assert upkeep_needed
+    with reverts("not-executor!"):
+        voter_module.performUpkeep(b"", {"from": accounts[6]})
