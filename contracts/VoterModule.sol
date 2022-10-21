@@ -40,7 +40,12 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
     EnumerableSet.AddressSet internal _executors;
 
     /* ========== EVENT ========== */
-    event RewardPaidModule(address indexed _user, address indexed _rewardToken, uint256 _reward, uint256 _timestamp);
+    event RewardPaidModule(
+        address indexed _user,
+        address indexed _rewardToken,
+        uint256 _reward,
+        uint256 _timestamp
+    );
 
     constructor(
         address _governance,
@@ -95,7 +100,7 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
     function pause() external onlyGovernance {
         _pause();
     }
-    
+
     /// @dev Unpauses the contract.
     function unpause() external onlyGovernance {
         _unpause();
@@ -188,7 +193,12 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
             );
             /// @dev will be used as condition, so rewards are not claim that often, leave time for accum
             lastRewardClaimTimestamp = block.timestamp;
-            emit RewardPaidModule(address(SAFE), address(AURABAL), aurabalSafeBal, lastRewardClaimTimestamp);
+            emit RewardPaidModule(
+                address(SAFE),
+                address(AURABAL),
+                aurabalSafeBal,
+                lastRewardClaimTimestamp
+            );
         }
     }
 
@@ -199,23 +209,23 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
             /// @dev check avail aura to avoid wd reverts
             uint256 graviPpfs = GRAVI.getPricePerFullShare();
             uint256 auraInVault = AURA.balanceOf(address(GRAVI));
+            uint256 auraInStrat = AURA.balanceOf(address(GRAVI_STRAT));
             (, uint256 unlockableStrat, , ) = LOCKER.lockedBalances(
                 GRAVI_STRAT
             );
-            uint256 totalWdAura = auraInVault + unlockableStrat;
+            uint256 totalWdAura = auraInVault + auraInStrat + unlockableStrat;
 
             /// @dev covers corner case when nothing might be withdrawable
             if (totalWdAura > 0) {
                 /// @dev depends on condition we will do a full wd or partial
                 if (totalWdAura < (graviSafeBal / ONE_ETH) * graviPpfs) {
-                        _checkTransactionAndExecute(
-                            address(GRAVI),
-                            abi.encodeWithSelector(
-                                IGravi.withdraw.selector,
-                                (totalWdAura * ONE_ETH )/ graviPpfs
-                            )
-                        );
-                    
+                    _checkTransactionAndExecute(
+                        address(GRAVI),
+                        abi.encodeWithSelector(
+                            IGravi.withdraw.selector,
+                            (totalWdAura * ONE_ETH) / graviPpfs
+                        )
+                    );
                 } else {
                     _checkTransactionAndExecute(
                         address(GRAVI),

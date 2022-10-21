@@ -70,11 +70,6 @@ def test_perform_upkeep_techops(
 
 
 def test_perform_upkeep_paused_state(voter_module, keeper, governance):
-    # push time for trigger `true` in upkeep
-    target_ts = voter_module.lastRewardClaimTimestamp() + voter_module.interval() * 2
-    chain.mine(timestamp=target_ts)
-    upkeep_needed = test_upkeep_needed(voter_module, keeper)
-    assert upkeep_needed
     voter_module.pause({"from": governance})
     with reverts("Pausable: paused"):
         voter_module.performUpkeep(b"", {"from": keeper})
@@ -82,10 +77,5 @@ def test_perform_upkeep_paused_state(voter_module, keeper, governance):
 
 
 def test_perform_upkeep_from_random_account(voter_module, keeper, accounts):
-    # push time for trigger `true` in upkeep
-    target_ts = voter_module.lastRewardClaimTimestamp() + voter_module.interval() * 2
-    chain.mine(timestamp=target_ts)
-    upkeep_needed = test_upkeep_needed(voter_module, keeper)
-    assert upkeep_needed
     with reverts("not-executor!"):
         voter_module.performUpkeep(b"", {"from": accounts[6]})
