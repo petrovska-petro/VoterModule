@@ -1,5 +1,10 @@
+dotenv: .env
+
 networks:
   default: mainnet-fork
+  mainnet-fork:
+    cmd_settings:
+      fork: https://eth-mainnet.alchemyapi.io/v2/$ALCHEMY_KEY$FORK_BLOCK_NUMBER
 
 autofetch_sources: true
 

@@ -11,7 +11,7 @@ def deployer(accounts):
 
 @pytest.fixture
 def governance(accounts):
-    return accounts[1]
+    return accounts.at("0xA9ed98B5Fb8428d68664f3C5027c62A10d45826b", force=True)
 
 
 @pytest.fixture
@@ -39,8 +39,8 @@ def safe():
 
 
 @pytest.fixture
-def voter_module(deployer, governance):
-    return VoterModule.deploy(governance, chain.time(), HOUR_SECS, {"from": deployer})
+def voter_module(deployer, techops):
+    yield VoterModule.deploy(techops, chain.time(), HOUR_SECS, {"from": deployer})
 
 
 # https://docs.pytest.org/en/6.2.x/fixture.html#autouse-fixtures-fixtures-you-don-t-have-to-request

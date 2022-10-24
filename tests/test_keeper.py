@@ -7,7 +7,7 @@ def test_upkeep_needed(voter_module, keeper):
     return upkeep_needed
 
 
-def test_perform_upkeep_cl_keeper(
+def test_perform_upkeep_keeper(
     voter_module, keeper, safe, gravi, aura, aurabal, trops, aura_locker
 ):
     # push time for trigger `True` in upkeep
@@ -33,35 +33,6 @@ def test_perform_upkeep_cl_keeper(
     # check that aurabal in trops increased
     aurabal_bal_after = aurabal.balanceOf(trops)
     assert aurabal_bal_after > aurabal_bal_before
-    # check that gravi is same value or less. Same if nothing could be wd
-    gravi_bal_after = gravi.balanceOf(safe)
-    assert gravi_bal_after <= gravi_bal_before
-    # check that naked aura is zero
-    assert aura.balanceOf(safe) == 0
-
-
-def test_perform_upkeep_techops(
-    voter_module, techops, safe, gravi, aura, aurabal, trops, aura_locker
-):
-    # push time for trigger `True` in upkeep
-    target_ts = voter_module.lastRewardClaimTimestamp() + voter_module.interval() * 2
-    chain.mine(timestamp=target_ts)
-    upkeep_needed = test_upkeep_needed(voter_module, techops)
-    assert upkeep_needed
-
-    # check vals before
-    aurabal_bal_before = aurabal.balanceOf(trops)
-    gravi_bal_before = gravi.balanceOf(safe)
-
-    # exec voter chore
-    voter_module.performUpkeep(b"", {"from": techops})
-
-    # check that unlocks all were processed
-    _, unlockable, _, _ = aura_locker.lockedBalances(safe)
-    assert unlockable == 0
-    # check that aurabal in trops increased, here may be equal since already was claim once
-    aurabal_bal_after = aurabal.balanceOf(trops)
-    assert aurabal_bal_after >= aurabal_bal_before
     # check that gravi is same value or less. Same if nothing could be wd
     gravi_bal_after = gravi.balanceOf(safe)
     assert gravi_bal_after <= gravi_bal_before

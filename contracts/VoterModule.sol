@@ -3,6 +3,7 @@ pragma solidity ^0.8.4;
 
 import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import "@openzeppelin/contracts/security/Pausable.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@chainlink/contracts/src/v0.8/KeeperCompatible.sol";
 
@@ -15,12 +16,13 @@ import "interfaces/badger/IGravi.sol";
 /// @dev  Allows whitelisted executors to trigger `performUpkeep` with limited scoped
 /// in our case to carry voter weekly chores
 /// Inspired from: https://github.com/gnosis/zodiac-guard-scope
-contract VoterModule is KeeperCompatibleInterface, Pausable {
+contract VoterModule is KeeperCompatibleInterface, Pausable, ReentrancyGuard {
     using EnumerableSet for EnumerableSet.AddressSet;
 
     /* ========== CONSTANTS VARIABLES ========== */
-    IGnosisSafe public constant SAFE =
-        IGnosisSafe(0xA9ed98B5Fb8428d68664f3C5027c62A10d45826b);
+    address public constant GOVERNANCE =
+        0xA9ed98B5Fb8428d68664f3C5027c62A10d45826b;
+    IGnosisSafe public constant SAFE = IGnosisSafe(GOVERNANCE);
     IERC20 public constant AURA =
         IERC20(0xC0c293ce456fF0ED870ADd98a0828Dd4d2903DBF);
     IERC20 public constant AURABAL =
@@ -33,7 +35,7 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
     uint256 constant ONE_ETH = 1 ether;
 
     /* ========== STATE VARIABLES ========== */
-    address public governance;
+    address public guardian;
     uint256 public lastRewardClaimTimestamp;
     uint256 public interval;
 
@@ -46,13 +48,19 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
         uint256 _reward,
         uint256 _timestamp
     );
+    event ExecutorAdded(address indexed _user, uint256 _timestamp);
+    event ExecutorRemoved(address indexed _user, uint256 _timestamp);
+    event GuardianUpdated(
+        address indexed newGuardian,
+        address indexed oldGuardian
+    );
 
     constructor(
-        address _governance,
+        address _guardian,
         uint64 _startTimestamp,
         uint256 _intervalSeconds
     ) {
-        governance = _governance;
+        guardian = _guardian;
         lastRewardClaimTimestamp = _startTimestamp;
         interval = _intervalSeconds;
     }
@@ -61,12 +69,20 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
                     MODIFIERS
     ****************************************/
     modifier onlyGovernance() {
-        require(msg.sender == governance, "not-governance!");
+        require(msg.sender == GOVERNANCE, "not-governance!");
         _;
     }
 
     modifier onlyExecutors() {
         require(_executors.contains(msg.sender), "not-executor!");
+        _;
+    }
+
+    modifier onlyGovernanceOrGuardian() {
+        require(
+            msg.sender == GOVERNANCE || msg.sender == guardian,
+            "not-gov-or-guardian"
+        );
         _;
     }
 
@@ -78,7 +94,8 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
     /// @param _executor Address which will have rights to call `checkTransactionAndExecute`.
     function addExecutor(address _executor) external onlyGovernance {
         require(_executor != address(0), "zero-address!");
-        _executors.add(_executor);
+        require(_executors.add(_executor), "not-add-in-set!");
+        emit ExecutorAdded(_executor, block.timestamp);
     }
 
     /// @dev Removes an executor to the Set of allowed addresses.
@@ -86,18 +103,22 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
     /// @param _executor Address which will not have rights to call `checkTransactionAndExecute`.
     function removeExecutor(address _executor) external onlyGovernance {
         require(_executor != address(0), "zero-address!");
-        _executors.remove(_executor);
+        require(_executors.remove(_executor), "not-remove-in-set!");
+        emit ExecutorRemoved(_executor, block.timestamp);
     }
 
-    /// @dev Updates the governance address
+    /// @dev Updates the guardian address
     /// @notice Only callable by governance.
-    /// @param _governance Address which will beccome governance
-    function setGovernance(address _governance) external onlyGovernance {
-        governance = _governance;
+    /// @param _guardian Address which will beccome guardian
+    function setGuardian(address _guardian) external onlyGovernance {
+        require(_guardian != address(0), "zero-address!");
+        address oldGuardian = _guardian;
+        guardian = _guardian;
+        emit GuardianUpdated(_guardian, oldGuardian);
     }
 
     /// @dev Pauses the contract, which prevents executing performUpkeep.
-    function pause() external onlyGovernance {
+    function pause() external onlyGovernanceOrGuardian {
         _pause();
     }
 
@@ -118,10 +139,11 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
         whenNotPaused
         returns (bool upkeepNeeded, bytes memory checkData)
     {
-        /// @dev multi-conditional upkeep checks
-        (, uint256 unlockable, , ) = LOCKER.lockedBalances(address(SAFE));
-        (, uint256 rewards) = LOCKER.userData(address(SAFE), address(AURABAL));
-        uint256 graviBal = GRAVI.balanceOf(address(SAFE));
+        (
+            uint256 unlockable,
+            uint256 rewards,
+            uint256 graviBal
+        ) = checkUpKeepConditions();
 
         if (unlockable > 0) {
             // prio expired locks
@@ -143,6 +165,7 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
         override
         onlyExecutors
         whenNotPaused
+        nonReentrant
     {
         /// @dev safety check, ensuring onchain module is config
         require(SAFE.isModuleEnabled(address(this)), "no-module-enabled!");
@@ -175,6 +198,8 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
             rewards > 0 &&
             (block.timestamp - lastRewardClaimTimestamp) > interval
         ) {
+            /// @dev will be used as condition, so rewards are not claim that often, leave time for accum
+            lastRewardClaimTimestamp = block.timestamp;
             _checkTransactionAndExecute(
                 address(LOCKER),
                 abi.encodeWithSelector(
@@ -191,8 +216,6 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
                     aurabalSafeBal
                 )
             );
-            /// @dev will be used as condition, so rewards are not claim that often, leave time for accum
-            lastRewardClaimTimestamp = block.timestamp;
             emit RewardPaidModule(
                 address(SAFE),
                 address(AURABAL),
@@ -285,5 +308,23 @@ contract VoterModule is KeeperCompatibleInterface, Pausable {
     /// @dev Returns all addresses which have executor role
     function getExecutors() public view returns (address[] memory) {
         return _executors.values();
+    }
+
+    /// @dev uint256 value-conditions to trigger `performUpKeep`
+    /// @return Values for `unlockable` locks expired, `rewards` auraBAL accumulated & `graviAURA` balance in voter
+    function checkUpKeepConditions()
+        public
+        view
+        returns (
+            uint256,
+            uint256,
+            uint256
+        )
+    {
+        /// @dev multi-conditional upkeep checks
+        (, uint256 unlockable, , ) = LOCKER.lockedBalances(address(SAFE));
+        (, uint256 rewards) = LOCKER.userData(address(SAFE), address(AURABAL));
+        uint256 graviBal = GRAVI.balanceOf(address(SAFE));
+        return (unlockable, rewards, graviBal);
     }
 }
