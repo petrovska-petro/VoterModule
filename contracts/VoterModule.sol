@@ -32,37 +32,37 @@ contract VoterModule is KeeperCompatibleInterface, Pausable, ReentrancyGuard {
     IGravi constant GRAVI = IGravi(0xBA485b556399123261a5F9c95d413B4f93107407);
     address constant TROPS = 0x042B32Ac6b453485e357938bdC38e0340d4b9276;
     address constant GRAVI_STRAT = 0x3c0989eF27e3e3fAb87a2d7C38B35880C90E63b5;
-    uint256 constant ONE_ETH = 1 ether;
 
     /* ========== STATE VARIABLES ========== */
     address public guardian;
     uint256 public lastRewardClaimTimestamp;
-    uint256 public interval;
+    uint256 public claimingInterval;
 
     EnumerableSet.AddressSet internal _executors;
 
     /* ========== EVENT ========== */
-    event RewardPaidModule(
+    event RewardPaid(
         address indexed _user,
         address indexed _rewardToken,
-        uint256 _reward,
+        uint256 _amount,
         uint256 _timestamp
     );
     event ExecutorAdded(address indexed _user, uint256 _timestamp);
     event ExecutorRemoved(address indexed _user, uint256 _timestamp);
     event GuardianUpdated(
         address indexed newGuardian,
-        address indexed oldGuardian
+        address indexed oldGuardian,
+        uint256 timestamp
     );
 
     constructor(
         address _guardian,
         uint64 _startTimestamp,
-        uint256 _intervalSeconds
+        uint256 _claimingIntervalSeconds
     ) {
         guardian = _guardian;
         lastRewardClaimTimestamp = _startTimestamp;
-        interval = _intervalSeconds;
+        claimingInterval = _claimingIntervalSeconds;
     }
 
     /***************************************
@@ -114,7 +114,7 @@ contract VoterModule is KeeperCompatibleInterface, Pausable, ReentrancyGuard {
         require(_guardian != address(0), "zero-address!");
         address oldGuardian = _guardian;
         guardian = _guardian;
-        emit GuardianUpdated(_guardian, oldGuardian);
+        emit GuardianUpdated(_guardian, oldGuardian, block.timestamp);
     }
 
     /// @dev Pauses the contract, which prevents executing performUpkeep.
@@ -148,10 +148,7 @@ contract VoterModule is KeeperCompatibleInterface, Pausable, ReentrancyGuard {
         if (unlockable > 0) {
             // prio expired locks
             upkeepNeeded = true;
-        } else if (
-            rewards > 0 &&
-            (block.timestamp - lastRewardClaimTimestamp) > interval
-        ) {
+        } else if (isRewardClaimable(rewards)) {
             upkeepNeeded = true;
         } else if (graviBal > 0) {
             upkeepNeeded = true;
@@ -183,40 +180,29 @@ contract VoterModule is KeeperCompatibleInterface, Pausable, ReentrancyGuard {
         if (unlockable > 0) {
             _checkTransactionAndExecute(
                 address(LOCKER),
-                abi.encodeWithSelector(
-                    ILockAura.processExpiredLocks.selector,
-                    true
-                )
+                abi.encodeCall(ILockAura.processExpiredLocks, true)
             );
         }
     }
 
     /// @dev method will claim auraBAL & transfer balance to trops
     function _claimRewardsAndSweep() internal {
-        (, uint256 rewards) = LOCKER.userData(address(SAFE), address(AURABAL));
-        if (
-            rewards > 0 &&
-            (block.timestamp - lastRewardClaimTimestamp) > interval
-        ) {
+        ILockAura.EarnedData[] memory earnData = LOCKER.claimableRewards(
+            address(SAFE)
+        );
+        if (isRewardClaimable(earnData[0].amount)) {
             /// @dev will be used as condition, so rewards are not claim that often, leave time for accum
             lastRewardClaimTimestamp = block.timestamp;
             _checkTransactionAndExecute(
                 address(LOCKER),
-                abi.encodeWithSelector(
-                    ILockAura.getReward.selector,
-                    address(SAFE)
-                )
+                abi.encodeCall(ILockAura.getReward, address(SAFE))
             );
             uint256 aurabalSafeBal = AURABAL.balanceOf(address(SAFE));
             _checkTransactionAndExecute(
                 address(AURABAL),
-                abi.encodeWithSelector(
-                    IERC20.transfer.selector,
-                    TROPS,
-                    aurabalSafeBal
-                )
+                abi.encodeCall(IERC20.transfer, (TROPS, aurabalSafeBal))
             );
-            emit RewardPaidModule(
+            emit RewardPaid(
                 address(SAFE),
                 address(AURABAL),
                 aurabalSafeBal,
@@ -230,7 +216,8 @@ contract VoterModule is KeeperCompatibleInterface, Pausable, ReentrancyGuard {
         uint256 graviSafeBal = GRAVI.balanceOf(address(SAFE));
         if (graviSafeBal > 0) {
             /// @dev check avail aura to avoid wd reverts
-            uint256 graviPpfs = GRAVI.getPricePerFullShare();
+            uint256 graviBalance = GRAVI.balance();
+            uint256 graviTotalSupply = GRAVI.totalSupply();
             uint256 auraInVault = AURA.balanceOf(address(GRAVI));
             uint256 auraInStrat = AURA.balanceOf(address(GRAVI_STRAT));
             (, uint256 unlockableStrat, , ) = LOCKER.lockedBalances(
@@ -241,12 +228,15 @@ contract VoterModule is KeeperCompatibleInterface, Pausable, ReentrancyGuard {
             /// @dev covers corner case when nothing might be withdrawable
             if (totalWdAura > 0) {
                 /// @dev depends on condition we will do a full wd or partial
-                if (totalWdAura < (graviSafeBal / ONE_ETH) * graviPpfs) {
+                if (
+                    totalWdAura <
+                    (graviSafeBal * graviBalance) / graviTotalSupply
+                ) {
                     _checkTransactionAndExecute(
                         address(GRAVI),
-                        abi.encodeWithSelector(
-                            IGravi.withdraw.selector,
-                            (totalWdAura * ONE_ETH) / graviPpfs
+                        abi.encodeCall(
+                            IGravi.withdraw,
+                            (totalWdAura * graviTotalSupply) / graviBalance
                         )
                     );
                 } else {
@@ -262,20 +252,15 @@ contract VoterModule is KeeperCompatibleInterface, Pausable, ReentrancyGuard {
                 /// @dev approves aura to process in locker
                 _checkTransactionAndExecute(
                     address(AURA),
-                    abi.encodeWithSelector(
-                        IERC20.approve.selector,
-                        address(LOCKER),
-                        auraSafeBal
+                    abi.encodeCall(
+                        IERC20.approve,
+                        (address(LOCKER), auraSafeBal)
                     )
                 );
                 /// @dev lock aura in locker
                 _checkTransactionAndExecute(
                     address(LOCKER),
-                    abi.encodeWithSelector(
-                        ILockAura.lock.selector,
-                        address(SAFE),
-                        auraSafeBal
-                    )
+                    abi.encodeCall(ILockAura.lock, (address(SAFE), auraSafeBal))
                 );
             }
         }
@@ -323,8 +308,17 @@ contract VoterModule is KeeperCompatibleInterface, Pausable, ReentrancyGuard {
     {
         /// @dev multi-conditional upkeep checks
         (, uint256 unlockable, , ) = LOCKER.lockedBalances(address(SAFE));
-        (, uint256 rewards) = LOCKER.userData(address(SAFE), address(AURABAL));
+        ILockAura.EarnedData[] memory earnData = LOCKER.claimableRewards(
+            address(SAFE)
+        );
         uint256 graviBal = GRAVI.balanceOf(address(SAFE));
-        return (unlockable, rewards, graviBal);
+        return (unlockable, earnData[0].amount, graviBal);
+    }
+
+    /// @dev reusable view method for checking if auraBAL rewards are claimable
+    function isRewardClaimable(uint256 rewards) public view returns (bool) {
+        return
+            rewards > 0 &&
+            (block.timestamp - lastRewardClaimTimestamp) > claimingInterval;
     }
 }

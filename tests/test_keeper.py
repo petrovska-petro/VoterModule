@@ -11,7 +11,9 @@ def test_perform_upkeep_keeper(
     voter_module, keeper, safe, gravi, aura, aurabal, trops, aura_locker
 ):
     # push time for trigger `True` in upkeep
-    target_ts = voter_module.lastRewardClaimTimestamp() + voter_module.interval() * 2
+    target_ts = (
+        voter_module.lastRewardClaimTimestamp() + voter_module.claimingInterval() * 2
+    )
     chain.mine(timestamp=target_ts)
     upkeep_needed = test_upkeep_needed(voter_module, keeper)
     assert upkeep_needed
@@ -24,8 +26,9 @@ def test_perform_upkeep_keeper(
     tx = voter_module.performUpkeep(b"", {"from": keeper})
 
     # check new custom event to including timestamp
-    assert len(tx.events["RewardPaidModule"]) > 0
-    print(tx.events["RewardPaidModule"])
+    reward_paid_event = tx.events["RewardPaid"]
+    assert len(reward_paid_event) > 0
+    print(reward_paid_event)
 
     # check that unlocks all were processed
     _, unlockable, _, _ = aura_locker.lockedBalances(safe)

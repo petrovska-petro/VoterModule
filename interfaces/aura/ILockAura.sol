@@ -7,16 +7,21 @@ interface ILockAura {
         uint32 unlockTime;
     }
 
+    struct EarnedData {
+        address token;
+        uint256 amount;
+    }
+
     function getReward(address _account) external;
 
     function processExpiredLocks(bool _relock) external;
 
     function lock(address _account, uint256 _amount) external;
 
-    function userData(address _account, address _rewardToken)
+    function claimableRewards(address _account)
         external
         view
-        returns (uint128 rewardPerTokenPaid, uint128 rewards);
+        returns (EarnedData[] memory userRewards);
 
     function lockedBalances(address _user)
         external
