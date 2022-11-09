@@ -3,7 +3,10 @@ from brownie import chain, reverts, accounts
 ## Bal vault
 GRAVI_WHALE = "0xba12222222228d8ba445958a75a0704d566bf2c8"
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> 100b1b8f3acfe773e0759026b8a2232fce25882d
 def is_upkeep_needed(voter_module, keeper):
     upkeep_needed, _ = voter_module.checkUpkeep(b"", {"from": keeper})
     assert upkeep_needed
