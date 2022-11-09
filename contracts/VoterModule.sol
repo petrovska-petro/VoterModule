@@ -142,15 +142,16 @@ contract VoterModule is KeeperCompatibleInterface, Pausable, ReentrancyGuard {
         (
             uint256 unlockable,
             uint256 rewards,
-            uint256 graviBal
+            uint256 aurabalSafeBal,
+            bool isGraviWithdrawable
         ) = checkUpKeepConditions();
 
         if (unlockable > 0) {
             // prio expired locks
             upkeepNeeded = true;
-        } else if (isRewardClaimable(rewards)) {
+        } else if (isRewardClaimable(rewards, aurabalSafeBal)) {
             upkeepNeeded = true;
-        } else if (graviBal > 0) {
+        } else if (isGraviWithdrawable) {
             upkeepNeeded = true;
         }
     }
@@ -190,7 +191,13 @@ contract VoterModule is KeeperCompatibleInterface, Pausable, ReentrancyGuard {
         ILockAura.EarnedData[] memory earnData = LOCKER.claimableRewards(
             address(SAFE)
         );
-        if (isRewardClaimable(earnData[0].amount)) {
+
+        if (
+            isRewardClaimable(
+                earnData[0].amount,
+                AURABAL.balanceOf(address(SAFE))
+            )
+        ) {
             /// @dev will be used as condition, so rewards are not claim that often, leave time for accum
             lastRewardClaimTimestamp = block.timestamp;
             _checkTransactionAndExecute(
@@ -215,18 +222,11 @@ contract VoterModule is KeeperCompatibleInterface, Pausable, ReentrancyGuard {
     function _withdrawGraviAndLockAura() internal {
         uint256 graviSafeBal = GRAVI.balanceOf(address(SAFE));
         if (graviSafeBal > 0) {
-            /// @dev check avail aura to avoid wd reverts
-            uint256 graviBalance = GRAVI.balance();
-            uint256 graviTotalSupply = GRAVI.totalSupply();
-            uint256 auraInVault = AURA.balanceOf(address(GRAVI));
-            uint256 auraInStrat = AURA.balanceOf(address(GRAVI_STRAT));
-            (, uint256 unlockableStrat, , ) = LOCKER.lockedBalances(
-                GRAVI_STRAT
-            );
-            uint256 totalWdAura = auraInVault + auraInStrat + unlockableStrat;
-
+            uint256 totalWdAura = totalAuraWithdrawable();
             /// @dev covers corner case when nothing might be withdrawable
             if (totalWdAura > 0) {
+                uint256 graviBalance = GRAVI.balance();
+                uint256 graviTotalSupply = GRAVI.totalSupply();
                 /// @dev depends on condition we will do a full wd or partial
                 if (
                     totalWdAura <
@@ -303,7 +303,8 @@ contract VoterModule is KeeperCompatibleInterface, Pausable, ReentrancyGuard {
         returns (
             uint256,
             uint256,
-            uint256
+            uint256,
+            bool
         )
     {
         /// @dev multi-conditional upkeep checks
@@ -311,14 +312,38 @@ contract VoterModule is KeeperCompatibleInterface, Pausable, ReentrancyGuard {
         ILockAura.EarnedData[] memory earnData = LOCKER.claimableRewards(
             address(SAFE)
         );
+        uint256 aurabalSafeBal = AURABAL.balanceOf(address(SAFE));
         uint256 graviBal = GRAVI.balanceOf(address(SAFE));
-        return (unlockable, earnData[0].amount, graviBal);
+
+        return (
+            unlockable,
+            earnData[0].amount,
+            aurabalSafeBal,
+            graviBal > 0 && totalAuraWithdrawable() > 0
+        );
     }
 
     /// @dev reusable view method for checking if auraBAL rewards are claimable
-    function isRewardClaimable(uint256 rewards) public view returns (bool) {
+    /// @param claimableRewards available auraBAL rewards amount
+    /// @param safeRewardsBal current value of auraBAL in the voter safe
+    /// @return boolean conditional to determine if we should trigger `_claimRewardsAndSweep` section
+    function isRewardClaimable(uint256 claimableRewards, uint256 safeRewardsBal)
+        public
+        view
+        returns (bool)
+    {
         return
-            rewards > 0 &&
+            (claimableRewards > 0 || safeRewardsBal > 0) &&
             (block.timestamp - lastRewardClaimTimestamp) > claimingInterval;
+    }
+
+    /// @dev returns the total amount withdrawable at current moment
+    /// @return totalWdAura Total amount of AURA withdrawable, summation of available in vault, strat and unlockable
+    function totalAuraWithdrawable() public view returns (uint256 totalWdAura) {
+        /// @dev check avail aura to avoid wd reverts
+        uint256 auraInVault = AURA.balanceOf(address(GRAVI));
+        uint256 auraInStrat = AURA.balanceOf(address(GRAVI_STRAT));
+        (, uint256 unlockableStrat, , ) = LOCKER.lockedBalances(GRAVI_STRAT);
+        totalWdAura = auraInVault + auraInStrat + unlockableStrat;
     }
 }

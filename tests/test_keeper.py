@@ -1,7 +1,10 @@
-from brownie import chain, reverts
+from brownie import chain, reverts, accounts
+
+## Bal vault
+GRAVI_WHALE = "0xba12222222228d8ba445958a75a0704d566bf2c8"
 
 
-def test_upkeep_needed(voter_module, keeper):
+def is_upkeep_needed(voter_module, keeper):
     upkeep_needed, _ = voter_module.checkUpkeep(b"", {"from": keeper})
     assert upkeep_needed
     return upkeep_needed
@@ -15,12 +18,18 @@ def test_perform_upkeep_keeper(
         voter_module.lastRewardClaimTimestamp() + voter_module.claimingInterval() * 2
     )
     chain.mine(timestamp=target_ts)
-    upkeep_needed = test_upkeep_needed(voter_module, keeper)
+    upkeep_needed = is_upkeep_needed(voter_module, keeper)
     assert upkeep_needed
+
+    ## Donate some graviAura to test locking as well
+    gravi.transfer(safe, 1e18, {"from": accounts.at(GRAVI_WHALE, force=True)})
 
     # check vals before
     aurabal_bal_before = aurabal.balanceOf(trops)
     gravi_bal_before = gravi.balanceOf(safe)
+
+    # check that unlocks all were processed
+    _, _, beforeLocked, _ = aura_locker.lockedBalances(safe)
 
     # exec voter chore
     tx = voter_module.performUpkeep(b"", {"from": keeper})
@@ -31,7 +40,10 @@ def test_perform_upkeep_keeper(
     print(reward_paid_event)
 
     # check that unlocks all were processed
-    _, unlockable, _, _ = aura_locker.lockedBalances(safe)
+    _, unlockable, afterLocked, _ = aura_locker.lockedBalances(safe)
+    ## We did lock something
+    assert afterLocked - beforeLocked > 0
+    ## We have unlocked all old stuf
     assert unlockable == 0
     # check that aurabal in trops increased
     aurabal_bal_after = aurabal.balanceOf(trops)
