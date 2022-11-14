@@ -191,20 +191,17 @@ contract VoterModule is KeeperCompatibleInterface, Pausable, ReentrancyGuard {
         ILockAura.EarnedData[] memory earnData = LOCKER.claimableRewards(
             address(SAFE)
         );
-
-        if (
-            isRewardClaimable(
-                earnData[0].amount,
-                AURABAL.balanceOf(address(SAFE))
-            )
-        ) {
+        uint256 aurabalSafeBal = AURABAL.balanceOf(address(SAFE));
+        if (isRewardClaimable(earnData[0].amount, aurabalSafeBal)) {
             /// @dev will be used as condition, so rewards are not claim that often, leave time for accum
             lastRewardClaimTimestamp = block.timestamp;
-            _checkTransactionAndExecute(
-                address(LOCKER),
-                abi.encodeCall(ILockAura.getReward, address(SAFE))
-            );
-            uint256 aurabalSafeBal = AURABAL.balanceOf(address(SAFE));
+            if (earnData[0].amount > 0) {
+                _checkTransactionAndExecute(
+                    address(LOCKER),
+                    abi.encodeCall(ILockAura.getReward, address(SAFE))
+                );
+                aurabalSafeBal = AURABAL.balanceOf(address(SAFE));
+            }
             _checkTransactionAndExecute(
                 address(AURABAL),
                 abi.encodeCall(IERC20.transfer, (TROPS, aurabalSafeBal))
